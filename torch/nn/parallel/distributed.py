@@ -632,6 +632,9 @@ class DistributedDataParallel(Module):
                              c10d reducer would call this hook and use the tensors returned
                              by the Future and copy grads to individual parameters.
 
+                             We also provide an API called "get_future" to convert
+                             c10d.ProcessGroupNCCL.work to torch.futures.Future.
+
         .. warning ::
             DDP communication hook can only be registered once and should be registered
             before calling backward.
@@ -643,6 +646,9 @@ class DistributedDataParallel(Module):
         .. warning ::
             DDP communication hook is experimental and subject to change.
 
+        .. warning ::
+            "get_future" API supports only NCCL backend.
+
         Example::
             Below is an example of a noop hook that returns back the same tensors:
 
@@ -652,6 +658,30 @@ class DistributedDataParallel(Module):
             >>>     fut = torch.futures.Future()
             >>>     fut.set_result(bucket.get_tensors())
             >>>     return fut
+
+        Example::
+            Below is an example of a simple allreduce hook.
+
+            >>> ddp._register_comm_hook(state = None, hook = allreduce)
+
+            >>> def allreduce(state: object, bucket: dist.GradBucket): -> torch.futures.Future
+            >>>     work = dist.allreduce(bucket.get_tensors())
+            >>>     return work.get_future()
+
+        Example::
+            Below is an example of a Parallel SGD algorithm where gradients are encoded before
+            allreduce, and then decoded after allreduce.
+
+            >>> ddp._register_comm_hook(state = None, hook = encode_and_decode)
+
+            >>> def encode_and_decode(state: object, bucket: dist.GradBucket): -> torch.futures.Future
+            >>>     encoded_tensors = encode(bucket.get_tensors()) # encode gradients
+            >>>     fut = process_group.allreduce(encoded_tensors).get_future()
+            >>>     # Define the then callback to decode.
+            >>>     def decode(fut):
+            >>>         decoded_tensors = decode(fut.wait()) # decode gradients
+            >>>         return decoded_tensors
+            >>>     return fut.then(decode)
 
         """
         self._check_comm_hook(hook)
